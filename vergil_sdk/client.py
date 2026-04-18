@@ -30,6 +30,8 @@ DEFAULT_TIMEOUT = 30.0
 VIDEO_TIMEOUT = 120.0
 EXPIRY_SKEW_SECONDS = 60
 
+unrestricted_paths = ["/health"]
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -120,7 +122,8 @@ class _AsyncTokenManager:
     def __init__(
         self, galleon_url: str, station_id: str | None, developer_token: str,
     ) -> None:
-        self._exchange_url = f"{galleon_url.rstrip('/')}/api/auth/token"
+        self._exchange_url = f"{galleon_url.rstrip(
+            '/')}/api/developer-token/exchange"
         self._station_id = station_id
         self._developer_token = developer_token
         self._station_token: str | None = None
@@ -145,7 +148,7 @@ class _AsyncTokenManager:
                     headers={
                         "Authorization": f"Bearer {self._developer_token}",
                     },
-                    json={"station_id": self._station_id},
+                    json={"stationId": self._station_id},
                     timeout=10.0,
                 )
             except httpx.HTTPError as e:
@@ -174,7 +177,8 @@ class _SyncTokenManager:
     def __init__(
         self, galleon_url: str, station_id: str | None, developer_token: str,
     ) -> None:
-        self._exchange_url = f"{galleon_url.rstrip('/')}/api/auth/token"
+        self._exchange_url = f"{galleon_url.rstrip(
+            '/')}/api/developer-token/exchange"
         self._station_id = station_id
         self._developer_token = developer_token
         self._station_token: str | None = None
@@ -198,7 +202,7 @@ class _SyncTokenManager:
                 headers={
                     "Authorization": f"Bearer {self._developer_token}",
                 },
-                json={"station_id": self._station_id},
+                json={"stationId": self._station_id},
                 timeout=10.0,
             )
         except httpx.HTTPError as e:
@@ -316,10 +320,14 @@ class AsyncVergilClient:
 
     async def _get(self, path: str, **params: Any) -> dict:
         try:
+            headers = {}
+            if path not in unrestricted_paths:
+                headers = await self._get_auth_headers()
+
             resp = await self._http.get(
                 path,
                 params=_strip_none(params),
-                headers=await self._get_auth_headers(),
+                headers=headers,
             )
         except httpx.ConnectError as e:
             raise VergilConnectionError(str(e)) from e
@@ -652,10 +660,13 @@ class VergilClient:
 
     def _get(self, path: str, **params: Any) -> dict:
         try:
+            headers = {}
+            if path not in unrestricted_paths:
+                headers = self._get_auth_headers()
             resp = self._http.get(
                 path,
                 params=_strip_none(params),
-                headers=self._get_auth_headers(),
+                headers=headers,
             )
         except httpx.ConnectError as e:
             raise VergilConnectionError(str(e)) from e
