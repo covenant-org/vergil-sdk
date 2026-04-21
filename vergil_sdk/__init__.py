@@ -26,12 +26,18 @@ from .models import (
     Stream,
 )
 from ._ws import MQTTSubscription
+from .oauth import Credentials, OAuthTokenManager, login, logout
 
 __all__ = [
     # Clients
     "VergilClient",
     "AsyncVergilClient",
     "MQTTSubscription",
+    # OAuth
+    "login",
+    "logout",
+    "Credentials",
+    "OAuthTokenManager",
     # Models
     "HealthStatus",
     "Metrics",

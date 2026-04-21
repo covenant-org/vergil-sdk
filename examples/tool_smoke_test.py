@@ -1,9 +1,12 @@
 """Exercise every vergil-sdk method and print a summary table.
 
+Prerequisite — run once to cache OAuth credentials:
+    vergil login --galleon-url https://galleon.example.com --station-id sta_abc
+
 Usage:
     export VERGIL_STATION_URL="http://<station-ip>:8080"
     export VERGIL_GALLEON_URL="https://galleon.example.com"
-    export VERGIL_DEVELOPER_TOKEN="dev_ey..."
+    export VERGIL_STATION_ID="sta_abc123"
     python tool_smoke_test.py
 """
 
@@ -56,12 +59,12 @@ def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     station_url = os.environ["VERGIL_STATION_URL"]
     galleon_url = os.environ["VERGIL_GALLEON_URL"]
-    dev_token = os.environ["VERGIL_DEVELOPER_TOKEN"]
+    station_id = os.environ["VERGIL_STATION_ID"]
 
     with VergilClient(
         station_url,
         galleon_url=galleon_url,
-        developer_token=dev_token,
+        station_id=station_id,
     ) as client:
         rows = [
             run("health", client.health),

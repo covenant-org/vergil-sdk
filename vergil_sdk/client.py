@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import Any
 
 import httpx
-import jwt
 
 from .exceptions import ConnectionError as VergilConnectionError
-from .exceptions import raise_for_status, AuthenticationError
+from .exceptions import raise_for_status
 from .models import (
     CraneCommandResult,
     CraneStatus,
@@ -25,10 +23,10 @@ from .models import (
     SensorData,
     Stream,
 )
+from .oauth import OAuthTokenManager
 
 DEFAULT_TIMEOUT = 30.0
 VIDEO_TIMEOUT = 120.0
-EXPIRY_SKEW_SECONDS = 60
 
 unrestricted_paths = ["/health"]
 
@@ -101,153 +99,33 @@ def _parse_segments(data: dict) -> SegmentList:
     )
 
 
-def _extract_expiry(token: str) -> float:
-    """Read the ``exp`` claim without verifying the signature."""
-    try:
-        claims = jwt.decode(token, options={"verify_signature": False})
-        return float(claims.get("exp", 0))
-    except jwt.InvalidTokenError:
-        return 0.0
-
-
-# ── Token management ───────────────────────────────────────────────────────────
-
-class _AsyncTokenManager:
-    """Handles developer-token to station-token exchange (async).
-
-    Caches the station token and transparently re-exchanges before it
-    expires so callers never see a 401.
-    """
-
-    def __init__(
-        self, galleon_url: str, station_id: str | None, developer_token: str,
-    ) -> None:
-        self._exchange_url = f"{galleon_url.rstrip(
-            '/')}/api/developer-token/exchange"
-        self._station_id = station_id
-        self._developer_token = developer_token
-        self._station_token: str | None = None
-        self._expires_at: float = 0.0
-
-    def set_station_id(self, station_id: str) -> None:
-        self._station_id = station_id
-
-    async def get_token(self) -> str:
-        if self._station_token is None or self._near_expiry():
-            await self._exchange()
-        return self._station_token
-
-    def _near_expiry(self) -> bool:
-        return (self._expires_at - time.time()) <= EXPIRY_SKEW_SECONDS
-
-    async def _exchange(self) -> None:
-        async with httpx.AsyncClient() as client:
-            try:
-                resp = await client.post(
-                    self._exchange_url,
-                    headers={
-                        "Authorization": f"Bearer {self._developer_token}",
-                    },
-                    json={"stationId": self._station_id},
-                    timeout=10.0,
-                )
-            except httpx.HTTPError as e:
-                raise AuthenticationError(
-                    f"token exchange request failed: {e}") from e
-
-        if resp.status_code != 200:
-            raise AuthenticationError(
-                f"token exchange failed ({resp.status_code}): {resp.text}",
-                status_code=resp.status_code,
-            )
-
-        try:
-            data = resp.json()
-            self._station_token = data["token"]
-        except (ValueError, KeyError) as e:
-            raise AuthenticationError(
-                f"unexpected exchange response: {e}") from e
-
-        self._expires_at = _extract_expiry(self._station_token)
-
-
-class _SyncTokenManager:
-    """Handles developer-token to station-token exchange (sync)."""
-
-    def __init__(
-        self, galleon_url: str, station_id: str | None, developer_token: str,
-    ) -> None:
-        self._exchange_url = f"{galleon_url.rstrip(
-            '/')}/api/developer-token/exchange"
-        self._station_id = station_id
-        self._developer_token = developer_token
-        self._station_token: str | None = None
-        self._expires_at: float = 0.0
-
-    def set_station_id(self, station_id: str) -> None:
-        self._station_id = station_id
-
-    def get_token(self) -> str:
-        if self._station_token is None or self._near_expiry():
-            self._exchange()
-        return self._station_token
-
-    def _near_expiry(self) -> bool:
-        return (self._expires_at - time.time()) <= EXPIRY_SKEW_SECONDS
-
-    def _exchange(self) -> None:
-        try:
-            resp = httpx.post(
-                self._exchange_url,
-                headers={
-                    "Authorization": f"Bearer {self._developer_token}",
-                },
-                json={"stationId": self._station_id},
-                timeout=10.0,
-            )
-        except httpx.HTTPError as e:
-            raise AuthenticationError(
-                f"token exchange request failed: {e}") from e
-
-        if resp.status_code != 200:
-            raise AuthenticationError(
-                f"token exchange failed ({resp.status_code}): {resp.text}",
-                status_code=resp.status_code,
-            )
-
-        try:
-            data = resp.json()
-            self._station_token = data["token"]
-        except (ValueError, KeyError) as e:
-            raise AuthenticationError(
-                f"unexpected exchange response: {e}") from e
-
-        self._expires_at = _extract_expiry(self._station_token)
-
-
 # ── Async client ───────────────────────────────────────────────────────────────
 
 class AsyncVergilClient:
     """Async client for the Vergil station local API.
 
-    Authenticate with a developer token (recommended) — the SDK handles
-    the exchange and auto-refresh transparently.  ``station_id`` is
-    optional; when omitted the SDK auto-discovers it from ``/health``::
+    Two auth modes:
 
-        async with AsyncVergilClient(
-            "http://192.168.1.10:8080",
-            galleon_url="https://galleon.example.com",
-            developer_token="dev_ey...",
-        ) as client:
-            health = await client.health()
+    1. **OAuth** — pass ``galleon_url`` + ``station_id``; the SDK loads
+       credentials cached by ``vergil login`` and silently refreshes
+       them. ``station_id`` is optional if auto-discovery is acceptable,
+       but is recommended because the credentials cache is keyed by
+       ``(galleon_url, station_id)``::
 
-    Or pass a raw station token directly (you manage expiry yourself)::
+            async with AsyncVergilClient(
+                "http://192.168.1.10:8080",
+                galleon_url="https://galleon.example.com",
+                station_id="sta_abc123",
+            ) as client:
+                health = await client.health()
 
-        async with AsyncVergilClient(
-            "http://192.168.1.10:8080",
-            token="ey...",
-        ) as client:
-            ...
+    2. **Raw token** — pass ``token`` if you already hold a station JWT;
+       you manage expiry yourself::
+
+            async with AsyncVergilClient(
+                "http://192.168.1.10:8080", token="ey...",
+            ) as client:
+                ...
     """
 
     def __init__(
@@ -257,7 +135,8 @@ class AsyncVergilClient:
         token: str | None = None,
         galleon_url: str | None = None,
         station_id: str | None = None,
-        developer_token: str | None = None,
+        credentials_path: Path | None = None,
+        interactive: bool = False,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -266,20 +145,18 @@ class AsyncVergilClient:
         self._client: httpx.AsyncClient | None = None
         self._station_id_resolved = station_id is not None
 
-        if developer_token:
-            if not galleon_url:
-                raise ValueError(
-                    "galleon_url is required when using developer_token"
-                )
-            self._token_mgr: _AsyncTokenManager | None = _AsyncTokenManager(
-                galleon_url, station_id, developer_token,
+        if galleon_url:
+            self._token_mgr: OAuthTokenManager | None = OAuthTokenManager(
+                galleon_url,
+                station_id or "",
+                credentials_path=credentials_path,
+                interactive=interactive,
             )
         else:
             self._token_mgr = None
 
     async def _resolve_station_id(self) -> None:
-        """Fetch station_id from /health if it was not provided."""
-        if self._station_id_resolved:
+        if self._station_id_resolved or self._token_mgr is None:
             return
         self._station_id_resolved = True
         data = await self._get("/health")
@@ -288,7 +165,7 @@ class AsyncVergilClient:
     async def _get_auth_headers(self) -> dict[str, str]:
         if self._token_mgr:
             await self._resolve_station_id()
-            token = await self._token_mgr.get_token()
+            token = await self._token_mgr.get_token_async()
             return {"Authorization": f"Bearer {token}"}
         if self._static_token:
             return {"Authorization": f"Bearer {self._static_token}"}
@@ -573,21 +450,7 @@ class AsyncVergilClient:
 class VergilClient:
     """Synchronous client for the Vergil station local API.
 
-    Authenticate with a developer token (recommended) — the SDK handles
-    the exchange and auto-refresh transparently.  ``station_id`` is
-    optional; when omitted the SDK auto-discovers it from ``/health``::
-
-        with VergilClient(
-            "http://192.168.1.10:8080",
-            galleon_url="https://galleon.example.com",
-            developer_token="dev_ey...",
-        ) as client:
-            health = client.health()
-
-    Or pass a raw station token directly (you manage expiry yourself)::
-
-        with VergilClient("http://192.168.1.10:8080", token="ey...") as client:
-            ...
+    See :class:`AsyncVergilClient` for the auth modes.
     """
 
     def __init__(
@@ -597,7 +460,8 @@ class VergilClient:
         token: str | None = None,
         galleon_url: str | None = None,
         station_id: str | None = None,
-        developer_token: str | None = None,
+        credentials_path: Path | None = None,
+        interactive: bool = False,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -606,20 +470,18 @@ class VergilClient:
         self._client: httpx.Client | None = None
         self._station_id_resolved = station_id is not None
 
-        if developer_token:
-            if not galleon_url:
-                raise ValueError(
-                    "galleon_url is required when using developer_token"
-                )
-            self._token_mgr: _SyncTokenManager | None = _SyncTokenManager(
-                galleon_url, station_id, developer_token,
+        if galleon_url:
+            self._token_mgr: OAuthTokenManager | None = OAuthTokenManager(
+                galleon_url,
+                station_id or "",
+                credentials_path=credentials_path,
+                interactive=interactive,
             )
         else:
             self._token_mgr = None
 
     def _resolve_station_id(self) -> None:
-        """Fetch station_id from /health if it was not provided."""
-        if self._station_id_resolved:
+        if self._station_id_resolved or self._token_mgr is None:
             return
         self._station_id_resolved = True
         data = self._get("/health")

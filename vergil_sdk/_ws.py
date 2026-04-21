@@ -2,41 +2,37 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import time
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
-import jwt
+import httpx
 import websockets
 import websockets.asyncio.client
 
 from .exceptions import AuthenticationError
 from .models import MQTTAck, MQTTMessage
-
-EXPIRY_SKEW_SECONDS = 60
+from .oauth import OAuthTokenManager
 
 
 class MQTTSubscription:
     """Async context manager for the ``/ws/mqtt`` WebSocket endpoint.
 
-    Handles authentication with either a developer token (auto-exchanged
-    and refreshed) or a raw station token.
+    Two auth modes (mirror :class:`vergil_sdk.VergilClient`):
 
-    Usage with developer token (recommended)::
+    OAuth (via cached credentials from ``vergil login``)::
 
         async with MQTTSubscription(
             "ws://192.168.1.10:8080",
             galleon_url="https://galleon.example.com",
             station_id="sta_abc123",
-            developer_token="dev_ey...",
         ) as mqtt:
             await mqtt.subscribe(["telem/#", "sensors/power"])
             async for msg in mqtt:
                 print(msg.topic, msg.payload)
 
-    Usage with raw station token::
+    Raw station token::
 
         async with MQTTSubscription(
             "ws://192.168.1.10:8080",
@@ -54,7 +50,8 @@ class MQTTSubscription:
         token: str | None = None,
         galleon_url: str | None = None,
         station_id: str | None = None,
-        developer_token: str | None = None,
+        credentials_path: Path | None = None,
+        interactive: bool = False,
     ) -> None:
         base = base_url.rstrip("/")
         if base.startswith("http://"):
@@ -65,81 +62,28 @@ class MQTTSubscription:
         self._base_url = base
         self._static_token = token
         self._ws: websockets.asyncio.client.ClientConnection | None = None
+        self._station_id = station_id
 
-        if developer_token:
-            if not galleon_url:
-                raise ValueError(
-                    "galleon_url is required when using developer_token"
-                )
-            self._galleon_url = galleon_url.rstrip("/")
-            self._station_id = station_id
-            self._developer_token = developer_token
-            self._station_token: str | None = None
-            self._expires_at: float = 0.0
+        if galleon_url:
+            self._token_mgr: OAuthTokenManager | None = OAuthTokenManager(
+                galleon_url,
+                station_id or "",
+                credentials_path=credentials_path,
+                interactive=interactive,
+            )
         else:
-            self._galleon_url = None
-            self._station_id = None
-            self._developer_token = None
-            self._station_token = None
-            self._expires_at = 0.0
+            self._token_mgr = None
 
     async def _get_token(self) -> str:
-        """Return a valid station token, exchanging if needed."""
-        if self._developer_token:
-            if (
-                self._station_token is None
-                or (self._expires_at - time.time()) <= EXPIRY_SKEW_SECONDS
-            ):
-                await self._exchange()
-            return self._station_token
+        if self._token_mgr:
+            return await self._token_mgr.get_token_async()
         if self._static_token:
             return self._static_token
         raise AuthenticationError("no token configured")
 
-    async def _exchange(self) -> None:
-        import httpx
-
-        url = f"{self._galleon_url}/api/auth/token"
-        async with httpx.AsyncClient() as client:
-            try:
-                resp = await client.post(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {self._developer_token}",
-                    },
-                    json={"station_id": self._station_id},
-                    timeout=10.0,
-                )
-            except httpx.HTTPError as e:
-                raise AuthenticationError(
-                    f"token exchange failed: {e}") from e
-
-        if resp.status_code != 200:
-            raise AuthenticationError(
-                f"token exchange failed ({resp.status_code}): {resp.text}",
-                status_code=resp.status_code,
-            )
-        try:
-            data = resp.json()
-            self._station_token = data["token"]
-        except (ValueError, KeyError) as e:
-            raise AuthenticationError(
-                f"unexpected exchange response: {e}") from e
-
-        try:
-            claims = jwt.decode(
-                self._station_token, options={"verify_signature": False})
-            self._expires_at = float(claims.get("exp", 0))
-        except jwt.InvalidTokenError:
-            self._expires_at = 0.0
-
     async def _resolve_station_id(self) -> None:
-        """Fetch station_id from /health if it was not provided."""
-        if self._station_id is not None:
+        if self._station_id is not None or self._token_mgr is None:
             return
-        import httpx
-
-        # /health requires no auth, use the http base url
         http_base = self._base_url
         if http_base.startswith("ws://"):
             http_base = "http://" + http_base[len("ws://"):]
@@ -150,6 +94,7 @@ class MQTTSubscription:
             resp = await client.get(f"{http_base}/health", timeout=10.0)
             data = resp.json()
             self._station_id = data["id"]
+            self._token_mgr.set_station_id(self._station_id)
 
     async def __aenter__(self) -> MQTTSubscription:
         await self._resolve_station_id()
