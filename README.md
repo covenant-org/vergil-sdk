@@ -182,6 +182,89 @@ async for chunk in resp.aiter_bytes():
 await resp.aclose()
 ```
 
+### Siren
+
+The cambox has two independent outputs: a **light** (`slow` / `fast` / `strobe`) and a **megaphone** (`continue` / `police` / `ambulance`).
+
+```python
+status = client.get_siren()
+print(status.status, status.error)
+
+client.set_siren_light("strobe", True)
+client.set_siren_light("strobe", False)
+
+client.set_siren_megaphone("police", True)
+client.set_siren_megaphone("police", False)
+```
+
+### Speakers
+
+Play audio through the station host's speakers. Only one playback source is active at a time — starting a new one terminates the previous.
+
+```python
+# Upload a complete file
+client.play_audio("alert.wav")
+client.play_audio(wav_bytes, content_type="audio/wav", filename="alert.wav")
+
+# Stream chunks (HTTP/1.1 chunked upload — for CLI clients)
+def chunks():
+    with open("long.ogg", "rb") as f:
+        while (buf := f.read(8192)):
+            yield buf
+
+client.stream_audio(chunks(), content_type="audio/ogg")
+```
+
+For browser-based two-way audio, build the page URL — the static HTML reads the JWT from `?token=` and forwards it to the underlying WebSockets:
+
+```python
+token = client._token_mgr.get_token()  # or your own JWT
+print(client.speakers_mic_page_url(token))     # browser → station mic
+print(client.speakers_duplex_page_url(token))  # both directions
+```
+
+#### Speaker mic over WebSocket
+
+For programmatic clients, push binary audio frames directly:
+
+```python
+import asyncio
+from vergil_sdk import SpeakerMicSession
+
+async def main():
+    async with SpeakerMicSession(
+        "http://192.168.1.10:8080",
+        galleon_url="https://galleon.example.com",
+        station_id="sta_abc123",
+    ) as spk:
+        await spk.send(opus_chunk)         # one frame
+        await spk.send_stream(chunk_iter)  # async iterable of frames
+
+asyncio.run(main())
+```
+
+Any container `decodebin` recognizes works (e.g. `audio/webm;codecs=opus`).
+
+#### Mic stream as webm/opus
+
+`stream_mic()` returns ogg, which Chrome/Edge `MediaSource` can't consume. The webm variant is a per-connection WebSocket:
+
+```python
+import asyncio
+from vergil_sdk import MicWebmStream
+
+async def main():
+    async with MicWebmStream(
+        "http://192.168.1.10:8080",
+        galleon_url="https://galleon.example.com",
+        station_id="sta_abc123",
+    ) as mic:
+        async for chunk in mic:
+            process(chunk)  # audio/webm;codecs=opus bytes
+
+asyncio.run(main())
+```
+
 ### Frigate events
 
 ```python

@@ -23,9 +23,12 @@ from .models import (
     ReviewSegmentList,
     SegmentList,
     SensorData,
+    SirenCommandResult,
+    SirenStatus,
+    SpeakerPlayResult,
     Stream,
 )
-from ._ws import MQTTSubscription
+from ._ws import MicWebmStream, MQTTSubscription, SpeakerMicSession
 from .oauth import Credentials, OAuthTokenManager, login, logout
 
 __all__ = [
@@ -33,6 +36,8 @@ __all__ = [
     "VergilClient",
     "AsyncVergilClient",
     "MQTTSubscription",
+    "SpeakerMicSession",
+    "MicWebmStream",
     # OAuth
     "login",
     "logout",
@@ -45,6 +50,9 @@ __all__ = [
     "CraneStatus",
     "CraneCommandResult",
     "Stream",
+    "SirenStatus",
+    "SirenCommandResult",
+    "SpeakerPlayResult",
     "FrigateEvent",
     "FrigateEventList",
     "ReviewSegment",

@@ -154,6 +154,29 @@ class SegmentList:
     count: int
 
 
+# ── Siren ──────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class SirenStatus:
+    status: dict[str, Any]
+    error: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class SirenCommandResult:
+    device: str  # "light" or "megaphone"
+    mode: str
+    state: bool
+
+
+# ── Speakers ──────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class SpeakerPlayResult:
+    status: str
+    bytes: int
+
+
 # ── WebSocket / MQTT ───────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)

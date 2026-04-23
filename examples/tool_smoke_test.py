@@ -119,6 +119,44 @@ def main():
         rows.append(run("send_crane_command",
                     lambda: client.send_crane_command("crane_stop")))
 
+        # Siren
+        rows.append(run("get_siren", client.get_siren))
+        rows.append(run(
+            "set_siren_light",
+            lambda: client.set_siren_light("slow", False),
+        ))
+        rows.append(run(
+            "set_siren_megaphone",
+            lambda: client.set_siren_megaphone("police", False),
+        ))
+
+        # Speakers — short silent WAV header (44 bytes, no audio frames)
+        silent_wav = (
+            b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00"
+            b"\x01\x00\x01\x00\x44\xac\x00\x00\x88X\x01\x00"
+            b"\x02\x00\x10\x00data\x00\x00\x00\x00"
+        )
+        rows.append(run(
+            "play_audio",
+            lambda: client.play_audio(
+                silent_wav, content_type="audio/wav", filename="silence.wav",
+            ),
+        ))
+        rows.append(run(
+            "stream_audio",
+            lambda: client.stream_audio(
+                iter([silent_wav]), content_type="audio/wav",
+            ),
+        ))
+        rows.append((
+            "speakers_mic_page_url", "ok",
+            client.speakers_mic_page_url("<jwt>"),
+        ))
+        rows.append((
+            "speakers_duplex_page_url", "ok",
+            client.speakers_duplex_page_url("<jwt>"),
+        ))
+
     width = max(len(r[0]) for r in rows)
     print(f"{'Tool'.ljust(width)}  Status  Detail")
     print(f"{'-' * width}  ------  ------")

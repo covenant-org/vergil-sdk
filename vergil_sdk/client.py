@@ -21,8 +21,12 @@ from .models import (
     ReviewSegmentList,
     SegmentList,
     SensorData,
+    SirenCommandResult,
+    SirenStatus,
+    SpeakerPlayResult,
     Stream,
 )
+from collections.abc import AsyncIterable, Iterable
 from .oauth import OAuthTokenManager
 
 DEFAULT_TIMEOUT = 30.0
@@ -290,6 +294,38 @@ class AsyncVergilClient:
         data = await self._post("/crane", json={"command": command})
         return CraneCommandResult(command=data["command"])
 
+    # ── Siren ──────────────────────────────────────────────────────────────
+
+    async def get_siren(self) -> SirenStatus:
+        """Get latest cambox siren/light status and last error."""
+        data = await self._get("/siren")
+        return SirenStatus(
+            status=data.get("status") or {},
+            error=data.get("error"),
+        )
+
+    async def set_siren_light(
+        self, mode: str, state: bool,
+    ) -> SirenCommandResult:
+        """Set the cambox light: mode in {'slow','fast','strobe'}."""
+        data = await self._post(
+            "/siren/light", json={"mode": mode, "state": state},
+        )
+        return SirenCommandResult(
+            device=data["device"], mode=data["mode"], state=data["state"],
+        )
+
+    async def set_siren_megaphone(
+        self, mode: str, state: bool,
+    ) -> SirenCommandResult:
+        """Set the cambox megaphone: mode in {'continue','police','ambulance'}."""
+        data = await self._post(
+            "/siren/megaphone", json={"mode": mode, "state": state},
+        )
+        return SirenCommandResult(
+            device=data["device"], mode=data["mode"], state=data["state"],
+        )
+
     # ── Streams ────────────────────────────────────────────────────────────
 
     async def list_streams(self) -> list[Stream]:
@@ -328,6 +364,98 @@ class AsyncVergilClient:
         if resp.status_code >= 400:
             raise_for_status(resp.status_code, {"error": "mic stream failed"})
         return resp
+
+    # ── Speakers ───────────────────────────────────────────────────────────
+
+    async def play_audio(
+        self,
+        data: bytes | str | Path,
+        *,
+        content_type: str | None = None,
+        filename: str | None = None,
+    ) -> SpeakerPlayResult:
+        """Play a complete audio file on the host speakers.
+
+        ``data`` may be a path to a local file or raw bytes. When a path is
+        given, the filename is forwarded as a multipart upload so the server
+        can infer the container type. When bytes are given, supply
+        ``content_type`` (e.g. ``"audio/wav"``) so the server can decode it.
+        """
+        path: Path | None = None
+        if isinstance(data, (str, Path)):
+            path = Path(data)
+            payload = path.read_bytes()
+            send_name = filename or path.name
+        else:
+            payload = data
+            send_name = filename
+
+        try:
+            if send_name:
+                files = {
+                    "file": (
+                        send_name,
+                        payload,
+                        content_type or "application/octet-stream",
+                    )
+                }
+                resp = await self._http.post(
+                    "/speakers/play",
+                    files=files,
+                    headers=await self._get_auth_headers(),
+                )
+            else:
+                headers = await self._get_auth_headers()
+                if content_type:
+                    headers["Content-Type"] = content_type
+                resp = await self._http.post(
+                    "/speakers/play",
+                    content=payload,
+                    headers=headers,
+                )
+        except httpx.ConnectError as e:
+            raise VergilConnectionError(str(e)) from e
+        body = _check(resp)
+        return SpeakerPlayResult(
+            status=body.get("status", ""),
+            bytes=body.get("bytes", 0),
+        )
+
+    async def stream_audio(
+        self,
+        chunks: AsyncIterable[bytes] | Iterable[bytes],
+        *,
+        content_type: str = "application/octet-stream",
+    ) -> SpeakerPlayResult:
+        """Stream audio bytes to the host speakers via HTTP/1.1 chunked upload.
+
+        ``chunks`` is consumed and forwarded as the request body. Returns once
+        the server finishes playback (or the upload is closed).
+        """
+        headers = await self._get_auth_headers()
+        headers["Content-Type"] = content_type
+        try:
+            resp = await self._http.post(
+                "/speakers/stream",
+                content=chunks,
+                headers=headers,
+                timeout=None,
+            )
+        except httpx.ConnectError as e:
+            raise VergilConnectionError(str(e)) from e
+        body = _check(resp)
+        return SpeakerPlayResult(
+            status=body.get("status", ""),
+            bytes=body.get("bytes", 0),
+        )
+
+    def speakers_mic_page_url(self, token: str) -> str:
+        """Build the URL for the browser ``/speakers/mic`` page."""
+        return f"{self._base_url}/speakers/mic?token={token}"
+
+    def speakers_duplex_page_url(self, token: str) -> str:
+        """Build the URL for the browser ``/speakers/duplex`` page."""
+        return f"{self._base_url}/speakers/duplex?token={token}"
 
     # ── Frigate Events ─────────────────────────────────────────────────────
 
@@ -612,6 +740,36 @@ class VergilClient:
         data = self._post("/crane", json={"command": command})
         return CraneCommandResult(command=data["command"])
 
+    # ── Siren ──────────────────────────────────────────────────────────────
+
+    def get_siren(self) -> SirenStatus:
+        """Get latest cambox siren/light status and last error."""
+        data = self._get("/siren")
+        return SirenStatus(
+            status=data.get("status") or {},
+            error=data.get("error"),
+        )
+
+    def set_siren_light(self, mode: str, state: bool) -> SirenCommandResult:
+        """Set the cambox light: mode in {'slow','fast','strobe'}."""
+        data = self._post(
+            "/siren/light", json={"mode": mode, "state": state},
+        )
+        return SirenCommandResult(
+            device=data["device"], mode=data["mode"], state=data["state"],
+        )
+
+    def set_siren_megaphone(
+        self, mode: str, state: bool,
+    ) -> SirenCommandResult:
+        """Set the cambox megaphone: mode in {'continue','police','ambulance'}."""
+        data = self._post(
+            "/siren/megaphone", json={"mode": mode, "state": state},
+        )
+        return SirenCommandResult(
+            device=data["device"], mode=data["mode"], state=data["state"],
+        )
+
     # ── Streams ────────────────────────────────────────────────────────────
 
     def list_streams(self) -> list[Stream]:
@@ -650,6 +808,92 @@ class VergilClient:
         if resp.status_code >= 400:
             raise_for_status(resp.status_code, {"error": "mic stream failed"})
         return resp
+
+    # ── Speakers ───────────────────────────────────────────────────────────
+
+    def play_audio(
+        self,
+        data: bytes | str | Path,
+        *,
+        content_type: str | None = None,
+        filename: str | None = None,
+    ) -> SpeakerPlayResult:
+        """Play a complete audio file on the host speakers.
+
+        ``data`` may be a path to a local file or raw bytes. Pass
+        ``content_type`` (e.g. ``"audio/wav"``) when uploading raw bytes.
+        """
+        path: Path | None = None
+        if isinstance(data, (str, Path)):
+            path = Path(data)
+            payload = path.read_bytes()
+            send_name = filename or path.name
+        else:
+            payload = data
+            send_name = filename
+
+        try:
+            if send_name:
+                files = {
+                    "file": (
+                        send_name,
+                        payload,
+                        content_type or "application/octet-stream",
+                    )
+                }
+                resp = self._http.post(
+                    "/speakers/play",
+                    files=files,
+                    headers=self._get_auth_headers(),
+                )
+            else:
+                headers = self._get_auth_headers()
+                if content_type:
+                    headers["Content-Type"] = content_type
+                resp = self._http.post(
+                    "/speakers/play",
+                    content=payload,
+                    headers=headers,
+                )
+        except httpx.ConnectError as e:
+            raise VergilConnectionError(str(e)) from e
+        body = _check(resp)
+        return SpeakerPlayResult(
+            status=body.get("status", ""),
+            bytes=body.get("bytes", 0),
+        )
+
+    def stream_audio(
+        self,
+        chunks: Iterable[bytes],
+        *,
+        content_type: str = "application/octet-stream",
+    ) -> SpeakerPlayResult:
+        """Stream audio bytes to the host speakers via HTTP/1.1 chunked upload."""
+        headers = self._get_auth_headers()
+        headers["Content-Type"] = content_type
+        try:
+            resp = self._http.post(
+                "/speakers/stream",
+                content=chunks,
+                headers=headers,
+                timeout=None,
+            )
+        except httpx.ConnectError as e:
+            raise VergilConnectionError(str(e)) from e
+        body = _check(resp)
+        return SpeakerPlayResult(
+            status=body.get("status", ""),
+            bytes=body.get("bytes", 0),
+        )
+
+    def speakers_mic_page_url(self, token: str) -> str:
+        """Build the URL for the browser ``/speakers/mic`` page."""
+        return f"{self._base_url}/speakers/mic?token={token}"
+
+    def speakers_duplex_page_url(self, token: str) -> str:
+        """Build the URL for the browser ``/speakers/duplex`` page."""
+        return f"{self._base_url}/speakers/duplex?token={token}"
 
     # ── Frigate Events ─────────────────────────────────────────────────────
 
