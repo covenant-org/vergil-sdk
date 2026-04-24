@@ -24,7 +24,7 @@ class MQTTSubscription:
     OAuth (via cached credentials from ``vergil login``)::
 
         async with MQTTSubscription(
-            "ws://192.168.1.10:8080",
+            "ws://192.168.1.10:8082",
             galleon_url="https://galleon.example.com",
             station_id="sta_abc123",
         ) as mqtt:
@@ -35,7 +35,7 @@ class MQTTSubscription:
     Raw station token::
 
         async with MQTTSubscription(
-            "ws://192.168.1.10:8080",
+            "ws://192.168.1.10:8082",
             token="ey...",
         ) as mqtt:
             await mqtt.subscribe(["telem/#"])

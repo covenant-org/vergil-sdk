@@ -26,7 +26,7 @@ Then use the SDK — it loads and refreshes the cached credentials automatically
 from vergil_sdk import VergilClient
 
 with VergilClient(
-    "http://192.168.1.10:8080",
+    "http://192.168.1.10:8082",
     galleon_url="https://galleon.example.com",
     station_id="sta_abc123",
 ) as client:
@@ -63,7 +63,7 @@ The SDK reads the cached credential, silently refreshes the short-lived access t
 from vergil_sdk import VergilClient
 
 with VergilClient(
-    "http://192.168.1.10:8080",
+    "http://192.168.1.10:8082",
     galleon_url="https://galleon.example.com",
     station_id="sta_abc123",
 ) as client:
@@ -76,7 +76,7 @@ If you already hold a station JWT (e.g. issued by your own OAuth client), pass i
 
 ```python
 client = VergilClient(
-    "http://192.168.1.10:8080",
+    "http://192.168.1.10:8082",
     token="ey...",
 )
 ```
@@ -314,7 +314,7 @@ from vergil_sdk import MQTTSubscription
 
 async def main():
     async with MQTTSubscription(
-        "http://192.168.1.10:8080",
+        "http://192.168.1.10:8082",
         galleon_url="https://galleon.example.com",
         station_id="sta_abc123",
     ) as mqtt:

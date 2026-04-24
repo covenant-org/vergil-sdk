@@ -117,7 +117,7 @@ class AsyncVergilClient:
        ``(galleon_url, station_id)``::
 
             async with AsyncVergilClient(
-                "http://192.168.1.10:8080",
+                "http://192.168.1.10:8082",
                 galleon_url="https://galleon.example.com",
                 station_id="sta_abc123",
             ) as client:
@@ -127,7 +127,7 @@ class AsyncVergilClient:
        you manage expiry yourself::
 
             async with AsyncVergilClient(
-                "http://192.168.1.10:8080", token="ey...",
+                "http://192.168.1.10:8082", token="ey...",
             ) as client:
                 ...
     """

@@ -4,7 +4,7 @@ Prerequisite — run once to cache OAuth credentials:
     vergil login --galleon-url https://galleon.example.com --station-id sta_abc
 
 Usage:
-    export VERGIL_STATION_URL="http://<station-ip>:8080"
+    export VERGIL_STATION_URL="http://<station-ip>:8082"
     export VERGIL_GALLEON_URL="https://galleon.example.com"
     export VERGIL_STATION_ID="sta_abc123"
     python tool_smoke_test.py
